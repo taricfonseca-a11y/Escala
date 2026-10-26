@@ -274,6 +274,8 @@ async function jogosDeCopa() {
   copasFaltando = COPAS.map(c => c.rotulo).filter(r => !ligas[r]);
   const ids = Object.values(ligas).flat();
   if (!ids.length) throw new Error('nenhuma competicao de copa encontrada na fonte');
+  const rotuloDe = {};
+  for (const rot in ligas) for (const id of ligas[rot]) rotuloDe[id] = rot;
   const jogos = [];
   for (const id of ids) {
     for (const ep of ['eventspastleague', 'eventsnextleague']) {
@@ -284,7 +286,9 @@ async function jogosDeCopa() {
         const t = ev.strTimestamp ? Date.parse(ev.strTimestamp.replace(' ', 'T') + 'Z')
                 : ev.dateEvent ? Date.parse(ev.dateEvent + 'T20:00:00Z') : null;
         if (!t) continue;
-        jogos.push({ t, times: [chaveNome(ev.strHomeTeam), chaveNome(ev.strAwayTeam)] });
+        jogos.push({ t, rotulo: rotuloDe[id] || 'copa',
+          times: [chaveNome(ev.strHomeTeam), chaveNome(ev.strAwayTeam)],
+          nomes: [ev.strHomeTeam, ev.strAwayTeam] });
       }
     }
   }
@@ -293,7 +297,9 @@ async function jogosDeCopa() {
 
 // Monta: clube_id -> dias desde o jogo anterior (qualquer competicao)
 async function calcularDescanso(ctx, clubes, rodada) {
-  const anteriores = {};   // chaveNome -> maior timestamp antes do jogo da rodada
+  const anteriores = {};   // cid -> jogo mais recente antes da rodada
+  const proximas = {};     // cid -> proximo jogo de copa depois da rodada
+  const ultimaCopa = {};   // cid -> {rotulo, t} do ultimo jogo de copa antes da rodada
 
   const registra = (chave, t, limite) => {
     if (t >= limite) return;
@@ -338,7 +344,15 @@ async function calcularDescanso(ctx, clubes, rodada) {
       const cid = porChave[nome];
       if (!cid) continue;
       casados++;
-      registra('cid:' + cid, j.t, estaRodada[cid]);
+      const base = estaRodada[cid];
+      if (j.t < base) {
+        registra('cid:' + cid, j.t, base);
+        if (!ultimaCopa[cid] || j.t > ultimaCopa[cid].t)
+          ultimaCopa[cid] = { rotulo: j.rotulo, t: j.t };
+      } else if (j.t > base) {
+        if (!proximas[cid] || j.t < proximas[cid].t)
+          proximas[cid] = { rotulo: j.rotulo, t: j.t };
+      }
     }
     copasOk = true;
     if (!casados) { copasOk = false; copasErro = 'nenhum clube bateu com os nomes da fonte'; }
@@ -347,13 +361,21 @@ async function calcularDescanso(ctx, clubes, rodada) {
     copasErro = e.message;
   }
 
-  const dias = {};
+  const fora = {};
   for (const cid in estaRodada) {
     const ant = anteriores['cid:' + cid];
-    dias[cid] = ant == null ? null
-      : Math.max(0, Math.round((estaRodada[cid] - ant) / 864e5));
+    const prox = proximas[cid];
+    fora[cid] = {
+      descanso: ant == null ? null
+        : Math.max(0, Math.round((estaRodada[cid] - ant) / 864e5)),
+      vemCopa: prox ? { rotulo: prox.rotulo,
+        dias: Math.max(0, Math.round((prox.t - estaRodada[cid]) / 864e5)),
+        data: new Date(prox.t) } : null,
+      veioCopa: ultimaCopa[cid] ? { rotulo: ultimaCopa[cid].rotulo,
+        dias: Math.max(0, Math.round((estaRodada[cid] - ultimaCopa[cid].t) / 864e5)) } : null,
+    };
   }
-  return dias;
+  return fora;
 }
 
 const mult = c => Math.max(0.4,
@@ -665,7 +687,48 @@ function pintaCorpo(bc, uni, ctx, clubes, mercado) {
         <div class="corpo"><div class="t">${a.apelido}</div>
         <div class="s">${(mercado.clubes[a.clube_id]||{}).abreviacao} · C$ ${num(a.preco_num)}</div></div></div>`);
 
+  // ---- quem pode poupar ------------------------------------------------
+  const DIAS_SEMANA = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+  const risco = [];
+  for (const cid in ctx) {
+    const c = ctx[cid], abrev = (clubes[cid] || {}).abreviacao || cid;
+    const motivos = [];
+    let peso = 0;
+    if (c.vemCopa && c.vemCopa.dias <= 4) {
+      motivos.push(`joga ${c.vemCopa.rotulo} ${c.vemCopa.dias === 0 ? 'no mesmo dia'
+        : c.vemCopa.dias === 1 ? 'no dia seguinte'
+        : `${c.vemCopa.dias} dias depois`} (${DIAS_SEMANA[c.vemCopa.data.getDay()]})`);
+      peso += 5 - c.vemCopa.dias;
+    }
+    if (c.veioCopa && c.veioCopa.dias <= 4) {
+      motivos.push(`vem de ${c.veioCopa.rotulo} ${c.veioCopa.dias} ${
+        c.veioCopa.dias === 1 ? 'dia' : 'dias'} antes`);
+      peso += 4 - c.veioCopa.dias;
+    }
+    if (!motivos.length && c.descanso != null && c.descanso <= 3) {
+      motivos.push(`só ${c.descanso} ${c.descanso === 1 ? 'dia' : 'dias'} desde o último jogo`);
+      peso += 2;
+    }
+    if (motivos.length) risco.push({ abrev, jogo: c.jogo, motivos, peso });
+  }
+  risco.sort((a, b) => b.peso - a.peso);
+
+  const blocoRisco = !risco.length ? '' : `
+    <h2>Quem pode poupar</h2>
+    <p class="dica">Clubes com jogo de copa colado na rodada. Isto é informativo:
+      <b>não altera a escalação sugerida acima</b> — o desgaste já entra pelo descanso,
+      mas a decisão de poupar é do técnico e eu não tenho como medir. Use como alerta
+      para conferir a provável antes de fechar.</p>
+    ${risco.map(x => `<div class="item">
+        <span class="pos">${x.abrev}</span>
+        <div class="corpo"><div class="t">${x.jogo}</div>
+          <div class="s">${x.motivos.join(' · ')}</div></div>
+      </div>`).join('')}
+    ${copasOk === false ? '<p class="dica">A fonte de copas falhou nesta rodada, '
+      + 'então esta lista enxerga só o Brasileirão.</p>' : ''}`;
+
   $('#corpo').innerHTML = `
+    ${blocoRisco}
     <h2>Banco</h2>
     <p class="dica">Não gasta cartoleta. Entra só se o titular não pisar em campo — o
       reserva de luxo entra pela pontuação, contra o pior titular da mesma posição.</p>
@@ -755,8 +818,8 @@ async function carrega(forcar) {
   const { ctx, clubes } = contexto(part);
   if (!Object.keys(ctx).length) throw new Error('A API não devolveu partidas para esta rodada.');
 
-  const dias = await calcularDescanso(ctx, clubes, rodada);
-  for (const cid in ctx) ctx[cid].descanso = dias[cid] ?? null;
+  const calendario = await calcularDescanso(ctx, clubes, rodada);
+  for (const cid in ctx) Object.assign(ctx[cid], calendario[cid] || { descanso: null });
 
   let esquemas = ESQ_FALLBACK;
   if (Array.isArray(esqApi) && esqApi.length) {
