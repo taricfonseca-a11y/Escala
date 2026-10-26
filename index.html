@@ -98,6 +98,13 @@ select{width:100%;background:var(--turf);color:var(--ink);border:1px solid var(-
 .aviso{border:1px solid var(--alert);border-radius:3px;padding:12px 13px;margin-top:14px;font-size:14px}
 .aviso b{display:block;margin-bottom:3px}
 .sumindo{opacity:.45;transition:opacity .2s}
+table.cal{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+table.cal th,table.cal td{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line-2)}
+table.cal th:first-child,table.cal td:first-child{text-align:left}
+table.cal th{color:var(--ink-dim);font-weight:500}
+table.cal td{font-variant-numeric:tabular-nums}
+.forte{color:var(--gold)}
+.fraco{color:var(--ink-dim)}
 footer{margin-top:30px;font-size:12px;color:var(--ink-dim);line-height:1.5}
 button.acao{width:100%;background:var(--gold);color:#13200F;border:0;border-radius:3px;
   padding:13px;font:600 16px Barlow,sans-serif;margin-top:14px}
@@ -139,6 +146,10 @@ button.acao:disabled{opacity:.4}
         <label for="duvida">Aceitar quem está como Dúvida</label>
       </div>
       <button class="acao" id="recarregar">Buscar dados novos</button>
+      <div id="calibBox">
+        <button class="acao" id="calibrar" style="background:var(--turf);color:var(--ink);border:1px solid var(--line)">Calibrar com o histórico</button>
+        <p class="dica" id="calibInfo"></p>
+      </div>
     </div>
   </details>
 
@@ -158,7 +169,12 @@ const fechamentoTs = st => st.fechamento_ts
   || null;
 const POS = {1:'GOL',2:'LAT',3:'ZAG',4:'MEI',5:'ATA',6:'TEC'};
 const MAX_CLUBE = 5;
-const PESOS = { mandoCasa:1.10, mandoFora:0.95, posAdv:0.015, forma:0.20, shrink:3 };
+const PESOS_CHUTE = { mandoCasa:1.10, mandoFora:0.95, posAdv:0.015, forma:0.20, shrink:3 };
+const PESOS = Object.assign({}, PESOS_CHUTE,
+  JSON.parse(localStorage.getItem('pesos') || '{}'));
+let DESCANSO = Object.assign({0:0.85, 1:0.85, 2:0.85, 3:0.90, 4:0.95, 5:0.98},
+  JSON.parse(localStorage.getItem('descanso') || '{}'));
+let CALIBRADO = JSON.parse(localStorage.getItem('calibrado') || 'null');
 // A API devolve posicoes por nome (gol/lat/zag/mei/ata/tec); aqui tudo vira id.
 const POS_ID = {gol:1, goleiro:1, lat:2, lateral:2, zag:3, zagueiro:3,
                 mei:4, meia:4, ata:5, atacante:5, tec:6, tecnico:6, 'técnico':6};
@@ -172,8 +188,6 @@ const COPAS = [
   { rotulo: 'Copa do Brasil',tem: n => n.includes('copa do brasil') },
   { rotulo: 'Mundial',       tem: n => n.includes('club world cup') || n.includes('intercontinental') },
 ];
-// Hipotese, nao medido: penalidade por dias de descanso desde o jogo anterior.
-const DESCANSO = {0:0.85, 1:0.85, 2:0.85, 3:0.90, 4:0.95, 5:0.98};
 const penalidade = d => d == null ? 1 : (DESCANSO[d] ?? 1);
 // TheSportsDB escreve alguns nomes diferente do Cartola.
 const APELIDOS = {
@@ -463,6 +477,135 @@ function banco(uni, titulares, esq) {
   return { lista: out, luxo };
 }
 
+/* ---------- calibração: mede os pesos contra o histórico da temporada ----
+   Regressão linear da pontuação real de cada atleta que entrou em campo
+   contra mando, força do adversário, forma e congestionamento de calendário,
+   com variáveis de controle por posição. Devolve coeficiente, erro padrão e
+   t — é o t que diz se o efeito existe ou se é ruído. */
+
+function ols(X, y) {
+  const n = X.length, k = X[0].length;
+  const XtX = Array.from({length:k}, () => new Float64Array(k));
+  const Xty = new Float64Array(k);
+  for (let i = 0; i < n; i++) {
+    const xi = X[i];
+    for (let a = 0; a < k; a++) {
+      Xty[a] += xi[a] * y[i];
+      for (let b = a; b < k; b++) XtX[a][b] += xi[a] * xi[b];
+    }
+  }
+  for (let a = 0; a < k; a++) for (let b = 0; b < a; b++) XtX[a][b] = XtX[b][a];
+
+  // Gauss-Jordan: inverte XtX
+  const M = XtX.map((r, i) => {
+    const linha = new Float64Array(2 * k);
+    linha.set(r); linha[k + i] = 1;
+    return linha;
+  });
+  for (let c = 0; c < k; c++) {
+    let piv = c;
+    for (let r = c + 1; r < k; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    if (Math.abs(M[piv][c]) < 1e-10) throw new Error('variáveis colineares demais');
+    [M[c], M[piv]] = [M[piv], M[c]];
+    const d = M[c][c];
+    for (let j = 0; j < 2 * k; j++) M[c][j] /= d;
+    for (let r = 0; r < k; r++) {
+      if (r === c) continue;
+      const f = M[r][c];
+      if (!f) continue;
+      for (let j = 0; j < 2 * k; j++) M[r][j] -= f * M[c][j];
+    }
+  }
+  const inv = M.map(r => Array.from(r.slice(k)));
+  const beta = inv.map(r => r.reduce((s, v, j) => s + v * Xty[j], 0));
+
+  let sse = 0;
+  for (let i = 0; i < n; i++) {
+    const p = X[i].reduce((s, v, j) => s + v * beta[j], 0);
+    sse += (y[i] - p) ** 2;
+  }
+  const s2 = sse / Math.max(1, n - k);
+  const se = beta.map((_, j) => Math.sqrt(Math.max(0, s2 * inv[j][j])));
+  return { beta, se, n, media: y.reduce((a, b) => a + b, 0) / n };
+}
+
+// dias de descanso de cada clube numa rodada passada (só Brasileirão)
+function descansoDaRodada(atual, anterior) {
+  const quando = {}, antes = {};
+  const ts = p => p.timestamp ? p.timestamp * 1000
+    : p.partida_data ? Date.parse(p.partida_data.replace(' ', 'T') + 'Z') : null;
+  for (const p of atual.partidas || []) {
+    const t = ts(p); if (!t) continue;
+    quando[p.clube_casa_id] = t; quando[p.clube_visitante_id] = t;
+  }
+  for (const p of (anterior && anterior.partidas) || []) {
+    const t = ts(p); if (!t) continue;
+    for (const cid of [p.clube_casa_id, p.clube_visitante_id])
+      if (quando[cid] && t < quando[cid] && (!antes[cid] || t > antes[cid])) antes[cid] = t;
+  }
+  const dias = {};
+  for (const cid in quando)
+    dias[cid] = antes[cid] == null ? null
+      : Math.max(0, Math.round((quando[cid] - antes[cid]) / 864e5));
+  return dias;
+}
+
+async function calibrar(ate, progresso) {
+  const X = [], y = [];
+  let anterior = null;
+
+  for (let r = 1; r < ate; r++) {
+    progresso(r, ate - 1);
+    let part, pont;
+    try {
+      part = await busca(`/partidas/${r}`, 60 * 24 * 365);
+      pont = await busca(`/atletas/pontuados/${r}`, 60 * 24 * 365);
+    } catch (e) { anterior = null; continue; }
+
+    const { ctx } = contexto(part);
+    const dias = descansoDaRodada(part, anterior);
+    anterior = part;
+
+    const atletas = (pont && pont.atletas) || {};
+    for (const id in atletas) {
+      const a = atletas[id];
+      const c = ctx[a.clube_id];
+      if (!c || a.pontuacao == null) continue;
+      const d = dias[a.clube_id];
+      const pos = a.posicao_id;
+      X.push([
+        1,
+        (c.casa ? 1 : 0) - 0.5,            // mando
+        c.posAdv - 10.5,                   // força do adversário
+        c.forma - 0.5,                     // forma recente
+        d == null ? 0 : Math.max(0, 6 - d),// congestionamento
+        pos === 2 ? 1 : 0, pos === 3 ? 1 : 0,
+        pos === 4 ? 1 : 0, pos === 5 ? 1 : 0, pos === 6 ? 1 : 0,
+      ]);
+      y.push(Number(a.pontuacao));
+    }
+  }
+
+  if (y.length < 500) throw new Error(`só ${y.length} observações; insuficiente`);
+  const { beta, se, n, media } = ols(X, y);
+  const t = beta.map((b, i) => se[i] ? b / se[i] : 0);
+
+  const rel = v => v / media;              // coeficiente linear -> multiplicador
+  return {
+    n, media,
+    rodadas: ate - 1,
+    medido: {
+      mandoCasa: 1 + rel(beta[1]) * 0.5,
+      mandoFora: 1 - rel(beta[1]) * 0.5,
+      posAdv:    rel(beta[2]),
+      forma:     rel(beta[3]),
+      congestao: rel(beta[4]),             // por dia de descanso faltando até 6
+    },
+    t: { mando: t[1], posAdv: t[2], forma: t[3], congestao: t[4] },
+    quando: Date.now(),
+  };
+}
+
 /* ---------- tela ---------- */
 const $ = s => document.querySelector(s);
 const num = (v,d=2) => v.toFixed(d).replace('.',',');
@@ -634,12 +777,86 @@ async function carrega(forcar) {
   sel.innerHTML = '<option value="0">Melhor de todos</option>' +
     Object.keys(esquemas).sort().map(k=>`<option value="${k}">${esquemas[k].nome}</option>`).join('');
 
-  ESTADO = { ctx, clubes, mercado, esquemas, offline: ESTADO.offline };
+  ESTADO = { ctx, clubes, mercado, esquemas, rodada, offline: ESTADO.offline };
   $('#ctrl').hidden = false;
   recalcula();
+  pintaCalib();
+}
+
+/* ---------- calibração: interface ---------- */
+const nf = (v, d=3) => v.toFixed(d).replace('.', ',');
+
+function pintaCalib() {
+  const box = $('#calibInfo');
+  if (!CALIBRADO) {
+    box.innerHTML = 'Os pesos atuais são estimativas minhas, não medidas. '
+      + 'A calibração lê as rodadas já disputadas e mede os valores reais.';
+    return;
+  }
+  const c = CALIBRADO, m = c.medido;
+  const linha = (nome, med, chute, t) => {
+    const sig = Math.abs(t) >= 2;
+    return `<tr><td>${nome}</td><td>${med}</td><td class="fraco">${chute}</td>
+      <td class="${sig ? 'forte' : 'fraco'}">${nf(t,1)}${sig ? '' : ' ✕'}</td></tr>`;
+  };
+  box.innerHTML = `
+    <table class="cal">
+      <tr><th>Efeito</th><th>medido</th><th>meu chute</th><th>t</th></tr>
+      ${linha('Mando em casa', nf(m.mandoCasa,3), nf(PESOS_CHUTE.mandoCasa,3), c.t.mando)}
+      ${linha('Mando fora', nf(m.mandoFora,3), nf(PESOS_CHUTE.mandoFora,3), -c.t.mando)}
+      ${linha('Posição do adv.', nf(m.posAdv,4), nf(PESOS_CHUTE.posAdv,4), c.t.posAdv)}
+      ${linha('Forma recente', nf(m.forma,3), nf(PESOS_CHUTE.forma,3), c.t.forma)}
+      ${linha('Jogo em menos de 6 dias', nf(m.congestao,4), '—', c.t.congestao)}
+    </table>
+    <p class="dica">${c.n.toLocaleString('pt-BR')} atuações em ${c.rodadas} rodadas,
+      média de ${nf(c.media,2)} pontos. A coluna <b>t</b> diz se o efeito existe:
+      acima de 2 é sinal, abaixo disso (marcado com ✕) é ruído e eu não usaria.
+      "Jogo em menos de 6 dias" é por dia faltando — se der −0,01, três dias de
+      descanso custam 3% da pontuação.</p>
+    <button class="acao" id="aplicarCalib">Usar os pesos medidos</button>
+    <button class="acao" id="voltarChute" style="background:var(--turf);color:var(--ink);border:1px solid var(--line)">Voltar aos meus chutes</button>`;
+
+  $('#aplicarCalib').onclick = () => {
+    Object.assign(PESOS, { mandoCasa:m.mandoCasa, mandoFora:m.mandoFora,
+                           posAdv:m.posAdv, forma:m.forma });
+    const d = {};
+    for (let k = 0; k <= 5; k++) d[k] = Math.max(0.5, 1 + m.congestao * (6 - k));
+    DESCANSO = d;
+    localStorage.setItem('pesos', JSON.stringify({ mandoCasa:m.mandoCasa,
+      mandoFora:m.mandoFora, posAdv:m.posAdv, forma:m.forma }));
+    localStorage.setItem('descanso', JSON.stringify(d));
+    recalcula();
+  };
+  $('#voltarChute').onclick = () => {
+    Object.assign(PESOS, PESOS_CHUTE);
+    DESCANSO = {0:0.85,1:0.85,2:0.85,3:0.90,4:0.95,5:0.98};
+    localStorage.removeItem('pesos'); localStorage.removeItem('descanso');
+    recalcula();
+  };
 }
 
 /* ---------- eventos ---------- */
+$('#calibrar').addEventListener('click', async e => {
+  const b = e.target;
+  if (!ESTADO.rodada) {
+    $('#calibInfo').textContent = 'Espere os dados da rodada carregarem.';
+    return;
+  }
+  b.disabled = true;
+  try {
+    CALIBRADO = await calibrar(ESTADO.rodada, (i, total) => {
+      b.textContent = `Lendo rodada ${i} de ${total}…`;
+    });
+    localStorage.setItem('calibrado', JSON.stringify(CALIBRADO));
+    pintaCalib();
+  } catch (err) {
+    $('#calibInfo').innerHTML = `<span style="color:var(--alert)">Não consegui calibrar:
+      ${err.message}</span>`;
+  }
+  b.disabled = false;
+  b.textContent = 'Calibrar com o histórico';
+});
+
 for (const id of ['orc','piso']) $('#'+id).addEventListener('input', recalcula);
 for (const id of ['esq','duvida']) $('#'+id).addEventListener('change', recalcula);
 $('#recarregar').addEventListener('click', async e => {
