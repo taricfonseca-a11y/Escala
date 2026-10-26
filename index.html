@@ -162,6 +162,33 @@ const PESOS = { mandoCasa:1.10, mandoFora:0.95, posAdv:0.015, forma:0.20, shrink
 // A API devolve posicoes por nome (gol/lat/zag/mei/ata/tec); aqui tudo vira id.
 const POS_ID = {gol:1, goleiro:1, lat:2, lateral:2, zag:3, zagueiro:3,
                 mei:4, meia:4, ata:5, atacante:5, tec:6, tecnico:6, 'técnico':6};
+const TSDB = 'https://www.thesportsdb.com/api/v1/json/123';
+// Competicoes que tiram descanso. O Brasileirao sai das partidas do Cartola.
+// Casamento por trecho do nome, nao por igualdade: a fonte escreve ora
+// "Copa Sudamericana", ora "CONMEBOL Sudamericana".
+const COPAS = [
+  { rotulo: 'Libertadores',  tem: n => n.includes('libertadores') },
+  { rotulo: 'Sul-Americana', tem: n => n.includes('sudamericana') || n.includes('sul americana') },
+  { rotulo: 'Copa do Brasil',tem: n => n.includes('copa do brasil') },
+  { rotulo: 'Mundial',       tem: n => n.includes('club world cup') || n.includes('intercontinental') },
+];
+// Hipotese, nao medido: penalidade por dias de descanso desde o jogo anterior.
+const DESCANSO = {0:0.85, 1:0.85, 2:0.85, 3:0.90, 4:0.95, 5:0.98};
+const penalidade = d => d == null ? 1 : (DESCANSO[d] ?? 1);
+// TheSportsDB escreve alguns nomes diferente do Cartola.
+const APELIDOS = {
+  'athletico pr':'athletico paranaense', 'atletico mg':'atletico mineiro',
+  'atletico go':'atletico goianiense', 'red bull bragantino':'rb bragantino',
+  'bragantino':'rb bragantino', 'vasco da gama':'vasco',
+  'sao paulo':'sao paulo', 'gremio':'gremio', 'coritiba':'coritiba',
+};
+const chaveNome = n => {
+  const base = String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\b(ec|fc|sc|ac|cr|ce|clube|futebol|esporte|esportivo|regatas|de|do|da|e)\b/g, '')
+    .replace(/\s+/g, ' ').trim();
+  return APELIDOS[base] || base;
+};
 const ESQ_FALLBACK = {
   1:{nome:'3-4-3',1:1,2:0,3:3,4:4,5:3,6:1}, 2:{nome:'3-5-2',1:1,2:0,3:3,4:5,5:2,6:1},
   3:{nome:'4-3-3',1:1,2:2,3:2,4:3,5:3,6:1}, 4:{nome:'4-4-2',1:1,2:2,3:2,4:4,5:2,6:1},
@@ -172,12 +199,13 @@ const ESQ_FALLBACK = {
 /* ---------- rede com cache local e proxy opcional ---------- */
 const proxy = () => localStorage.getItem('proxy') || '';
 
-async function busca(path, maxIdadeMin) {
-  const chave = 'c:' + path;
+async function busca(path, maxIdadeMin, base) {
+  const raiz = base || API;
+  const chave = 'c:' + raiz + path;
   const salvo = JSON.parse(localStorage.getItem(chave) || 'null');
   if (salvo && (Date.now() - salvo.t) / 60000 < maxIdadeMin) return salvo.d;
   try {
-    const url = proxy() ? proxy() + encodeURIComponent(API + path) : API + path;
+    const url = proxy() ? proxy() + encodeURIComponent(raiz + path) : raiz + path;
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
@@ -207,10 +235,118 @@ function contexto(dados) {
   return { ctx, clubes };
 }
 
+/* ---------- descanso: ultimo jogo de cada clube em qualquer competicao ----
+   Brasileirao sai de /partidas do Cartola (rodada anterior e atual).
+   Copas saem do TheSportsDB, por competicao: 2 chamadas por copa, nao por clube.
+   Se as copas falharem, copasOk fica false e a tela avisa — nunca penaliza no escuro. */
+let copasOk = null, copasErro = '', copasAchadas = [], copasFaltando = [];
+
+async function idsCopas() {
+  const d = await busca('/all_leagues.php', 60 * 24 * 30, TSDB);
+  const achados = {};                       // rotulo -> [idLeague]
+  for (const l of (d && d.leagues) || []) {
+    const nome = (l.strLeague || '').normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    if (!nome || (l.strSport && l.strSport !== 'Soccer')) continue;
+    for (const c of COPAS)
+      if (c.tem(nome)) (achados[c.rotulo] ||= []).push(l.idLeague);
+  }
+  return achados;
+}
+
+async function jogosDeCopa() {
+  const ligas = await idsCopas();
+  copasAchadas = Object.keys(ligas);
+  copasFaltando = COPAS.map(c => c.rotulo).filter(r => !ligas[r]);
+  const ids = Object.values(ligas).flat();
+  if (!ids.length) throw new Error('nenhuma competicao de copa encontrada na fonte');
+  const jogos = [];
+  for (const id of ids) {
+    for (const ep of ['eventspastleague', 'eventsnextleague']) {
+      let d;
+      try { d = await busca(`/${ep}.php?id=${id}`, 60 * 6, TSDB); }
+      catch (e) { continue; }                      // uma competicao vazia nao derruba o resto
+      for (const ev of (d && d.events) || []) {
+        const t = ev.strTimestamp ? Date.parse(ev.strTimestamp.replace(' ', 'T') + 'Z')
+                : ev.dateEvent ? Date.parse(ev.dateEvent + 'T20:00:00Z') : null;
+        if (!t) continue;
+        jogos.push({ t, times: [chaveNome(ev.strHomeTeam), chaveNome(ev.strAwayTeam)] });
+      }
+    }
+  }
+  return jogos;
+}
+
+// Monta: clube_id -> dias desde o jogo anterior (qualquer competicao)
+async function calcularDescanso(ctx, clubes, rodada) {
+  const anteriores = {};   // chaveNome -> maior timestamp antes do jogo da rodada
+
+  const registra = (chave, t, limite) => {
+    if (t >= limite) return;
+    if (!anteriores[chave] || t > anteriores[chave]) anteriores[chave] = t;
+  };
+
+  // quando cada clube joga nesta rodada
+  const estaRodada = {};
+  try {
+    const d = await busca(`/partidas/${rodada}`, 30);
+    for (const p of d.partidas || []) {
+      const t = p.timestamp ? p.timestamp * 1000 : Date.parse(p.partida_data + 'Z');
+      if (!t) continue;
+      estaRodada[p.clube_casa_id] = t;
+      estaRodada[p.clube_visitante_id] = t;
+    }
+  } catch (e) { return {}; }
+
+  // Brasileirao: rodada anterior
+  if (rodada > 1) {
+    try {
+      const d = await busca(`/partidas/${rodada - 1}`, 60 * 24);
+      for (const p of d.partidas || []) {
+        const t = p.timestamp ? p.timestamp * 1000 : Date.parse(p.partida_data + 'Z');
+        if (!t) continue;
+        for (const cid of [p.clube_casa_id, p.clube_visitante_id])
+          if (estaRodada[cid]) registra('cid:' + cid, t, estaRodada[cid]);
+      }
+    } catch (e) { /* segue so com as copas */ }
+  }
+
+  // Copas
+  try {
+    const jogos = await jogosDeCopa();
+    const porChave = {};
+    for (const cid in estaRodada) {
+      const c = clubes[cid] || {};
+      porChave[chaveNome(c.nome || c.nome_fantasia || c.abreviacao)] = cid;
+    }
+    let casados = 0;
+    for (const j of jogos) for (const nome of j.times) {
+      const cid = porChave[nome];
+      if (!cid) continue;
+      casados++;
+      registra('cid:' + cid, j.t, estaRodada[cid]);
+    }
+    copasOk = true;
+    if (!casados) { copasOk = false; copasErro = 'nenhum clube bateu com os nomes da fonte'; }
+  } catch (e) {
+    copasOk = false;
+    copasErro = e.message;
+  }
+
+  const dias = {};
+  for (const cid in estaRodada) {
+    const ant = anteriores['cid:' + cid];
+    dias[cid] = ant == null ? null
+      : Math.max(0, Math.round((estaRodada[cid] - ant) / 864e5));
+  }
+  return dias;
+}
+
 const mult = c => Math.max(0.4,
   (c.casa ? PESOS.mandoCasa : PESOS.mandoFora)
   * (1 + (c.posAdv - 10.5) * PESOS.posAdv)
-  * (1 + (c.forma - 0.5) * PESOS.forma));
+  * (1 + (c.forma - 0.5) * PESOS.forma)
+  * penalidade(c.descanso));
 
 function universo(mercado, ctx, { duvida, piso }) {
   const ok = new Set(duvida ? [7,2] : [7]);
@@ -372,7 +508,10 @@ function pintaCorpo(bc, uni, ctx, clubes, mercado) {
   const linhaConf = x => `<div class="item">
       <span class="pos">${x.abrev}</span>
       <div class="corpo"><div class="t">${x.c.jogo} ${x.c.casa?'':'<span class="fora">(fora)</span>'}</div>
-        <div class="s">adversário em ${x.c.posAdv}º</div>
+        <div class="s">adversário em ${x.c.posAdv}º${
+          x.c.descanso == null ? '' :
+          ` · ${x.c.descanso} ${x.c.descanso === 1 ? 'dia' : 'dias'} de descanso${
+            penalidade(x.c.descanso) < 1 ? ' ⚠︎' : ''}`}</div>
         <div class="barra"><i style="width:${larg(x.m).toFixed(0)}%"></i></div></div>
       <span class="n">${num(x.m,2)}</span></div>`;
 
@@ -392,8 +531,15 @@ function pintaCorpo(bc, uni, ctx, clubes, mercado) {
       vale +${num(bc.luxo.ganho,1)} ${bc.luxo.ganho>=1.95?'pontos':'ponto'} por poder substituir o pior titular da posição,
       que esperamos em ${num(bc.luxo.pior,1)}.</p>` : ''}
     <h2>Confrontos</h2>
-    <p class="dica">Mando de campo, posição do adversário na tabela e os últimos cinco jogos,
-      combinados num multiplicador. Acima de 1,00 pesa a favor.</p>
+    <p class="dica">Mando de campo, posição do adversário na tabela, os últimos cinco jogos
+      e os dias de descanso desde o jogo anterior em qualquer competição, combinados num
+      multiplicador. Acima de 1,00 pesa a favor.</p>
+    ${copasOk === true && copasAchadas.length ? `<p class="dica">Competições
+      consideradas no descanso: Brasileirão, ${copasAchadas.join(', ')}.${
+      copasFaltando.length ? ` Não encontrada na fonte: ${copasFaltando.join(', ')}.` : ''}</p>` : ''}
+    ${copasOk === false ? `<div class="aviso"><b>Sem dados de copa nesta rodada</b>
+      O descanso considera só o Brasileirão — quem jogou Libertadores, Sul-Americana ou
+      Copa do Brasil no meio de semana não está penalizado. Motivo: ${copasErro}.</div>` : ''}
     ${confrontos.map(linhaConf).join('')}
     ${fora.length ? `<h2>Caros fora de combate</h2>${fora.join('')}` : ''}`;
 }
@@ -444,7 +590,9 @@ function recalcula() {
     `Ajustar o time · ${esqEscolhido.nome} · C$ ${num(orcamento,1)}`;
   $('#rodape').innerHTML = ESTADO.offline
     ? `Sem conexão com a API. Mostrando os dados salvos em ${ESTADO.offline}.`
-    : 'Pontuação esperada é estimativa do modelo, não promessa. Confira a escalação no app oficial antes do fechamento.';
+    : 'Pontuação esperada é estimativa do modelo, não promessa. A penalidade por '
+      + 'desgaste é hipótese calibrada no olho, não medida nos dados. Confira a '
+      + 'escalação no app oficial antes do fechamento.';
 }
 
 async function carrega(forcar) {
@@ -463,6 +611,9 @@ async function carrega(forcar) {
 
   const { ctx, clubes } = contexto(part);
   if (!Object.keys(ctx).length) throw new Error('A API não devolveu partidas para esta rodada.');
+
+  const dias = await calcularDescanso(ctx, clubes, rodada);
+  for (const cid in ctx) ctx[cid].descanso = dias[cid] ?? null;
 
   let esquemas = ESQ_FALLBACK;
   if (Array.isArray(esqApi) && esqApi.length) {
