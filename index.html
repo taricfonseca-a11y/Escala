@@ -149,6 +149,13 @@ button.acao:disabled{opacity:.4}
 
 <script>
 const API = 'https://api.cartolafc.globo.com';
+const MERCADO = {1:'Mercado aberto', 2:'Mercado fechado', 3:'Mercado em manutenção',
+                 4:'Mercado em atualização', 6:'Fim de temporada'};
+const fechamentoTs = st => st.fechamento_ts
+  || (st.fechamento && (st.fechamento.timestamp
+      || Date.UTC(st.fechamento.ano, st.fechamento.mes - 1, st.fechamento.dia,
+                  st.fechamento.hora + 3, st.fechamento.minuto) / 1000))
+  || null;
 const POS = {1:'GOL',2:'LAT',3:'ZAG',4:'MEI',5:'ATA',6:'TEC'};
 const MAX_CLUBE = 5;
 const PESOS = { mandoCasa:1.10, mandoFora:0.95, posAdv:0.015, forma:0.20, shrink:3 };
@@ -393,7 +400,8 @@ function relogio(ts) {
   if (!ts) { el.textContent = ''; return; }
   const tick = () => {
     let s = ts * 1000 - Date.now();
-    if (s <= 0) { el.textContent = 'mercado fechado'; el.className = 'fechado'; return; }
+    if (s <= 0) { el.textContent = 'fechado'; el.className = 'fechado';
+                  clearInterval(window._t); return; }
     const d = Math.floor(s/864e5), h = Math.floor(s/36e5)%24, m = Math.floor(s/6e4)%60;
     el.textContent = d ? `${d}d ${h}h` : (h ? `${h}h ${m}min` : `${m}min`);
     el.className = (s < 36e5) ? 'fechado' : '';
@@ -440,8 +448,9 @@ async function carrega(forcar) {
   const idade = forcar ? 0 : 10;
   const status = await busca('/mercado/status', forcar ? 0 : 5);
   const rodada = status.rodada_atual;
-  $('#rodada').innerHTML = `Rodada ${rodada}<small>${status.status_mercado_txt||''}</small>`;
-  relogio(status.fechamento_ts);
+  const txt = status.status_mercado_txt || MERCADO[status.status_mercado] || '';
+  $('#rodada').innerHTML = `Rodada ${rodada}<small>${txt}</small>`;
+  relogio(fechamentoTs(status));
 
   const [part, mercado, esqApi] = await Promise.all([
     busca('/partidas/' + rodada, idade),
