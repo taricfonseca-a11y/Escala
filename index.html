@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Escala</title>
+<meta name="theme-color" content="#0E1A14">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Escala">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --turf:#0E1A14; --turf-2:#16271E; --line:#273E31; --line-2:#1C2F25;
+  --ink:#EAF2EC; --ink-dim:#8FA698; --gold:#F2C14E; --alert:#E2574C;
+  --pad:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--turf);color:var(--ink);font-family:Barlow,system-ui,sans-serif}
+body{padding:env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 24px);font-size:15px;line-height:1.45}
+.wrap{max-width:560px;margin:0 auto;padding:0 var(--pad)}
+h2{font-family:"Barlow Condensed",sans-serif;font-weight:600;font-size:22px;letter-spacing:.01em;margin:26px 0 10px}
+
+/* ---- barra do prazo ---- */
+.deadline{position:sticky;top:0;z-index:20;background:var(--turf);
+  border-bottom:1px solid var(--line-2);padding:10px var(--pad) 9px}
+.deadline .in{max-width:560px;margin:0 auto;display:flex;align-items:baseline;gap:10px}
+.rodada{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:26px;line-height:1}
+.rodada small{font-weight:500;font-size:13px;color:var(--ink-dim);margin-left:5px}
+#relogio{margin-left:auto;font-family:"Barlow Condensed",sans-serif;font-weight:600;
+  font-size:20px;color:var(--gold);font-variant-numeric:tabular-nums}
+#relogio.fechado{color:var(--alert)}
+
+/* ---- campo ---- */
+.campo{position:relative;margin-top:14px;border-radius:4px;overflow:hidden;
+  background:
+    repeating-linear-gradient(180deg,#152419 0 46px,#132117 46px 92px);
+  border:1px solid var(--line);padding:16px 8px 12px}
+.campo::before{content:"";position:absolute;left:12%;right:12%;top:50%;height:1px;
+  background:var(--line);opacity:.8}
+.campo::after{content:"";position:absolute;left:50%;top:50%;width:76px;height:76px;
+  margin:-38px 0 0 -38px;border:1px solid var(--line);border-radius:50%;opacity:.8}
+.linha{position:relative;z-index:2;display:flex;justify-content:center;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.linha:last-child{margin-bottom:4px}
+.chip{flex:0 1 92px;min-width:0;background:var(--turf-2);border:1px solid var(--line);
+  border-radius:3px;padding:7px 6px 6px;text-align:center}
+.chip.cap{border-color:var(--gold)}
+.chip .nome{font-family:"Barlow Condensed",sans-serif;font-weight:600;font-size:16px;
+  line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip .sub{font-size:11px;color:var(--ink-dim);margin-top:2px;
+  display:flex;justify-content:center;gap:5px;font-variant-numeric:tabular-nums}
+.chip .pts{color:var(--ink)}
+.chip.cap .faixa{display:block;height:2px;background:var(--gold);margin:5px -6px -6px}
+.fora{color:var(--ink-dim)}
+
+/* ---- números ---- */
+.placar{display:flex;gap:1px;margin-top:12px;background:var(--line-2);border-radius:3px;overflow:hidden}
+.placar div{flex:1;background:var(--turf-2);padding:10px 8px}
+.placar b{display:block;font-family:"Barlow Condensed",sans-serif;font-weight:700;
+  font-size:21px;font-variant-numeric:tabular-nums}
+.placar span{font-size:11px;color:var(--ink-dim)}
+
+/* ---- controles ---- */
+details.ctrl{margin-top:14px;border:1px solid var(--line);border-radius:3px;background:var(--turf-2)}
+details.ctrl summary{padding:11px 13px;cursor:pointer;font-weight:500;list-style:none}
+details.ctrl summary::-webkit-details-marker{display:none}
+details.ctrl summary::after{content:"+";float:right;color:var(--ink-dim)}
+details.ctrl[open] summary::after{content:"–"}
+.campos{padding:2px 13px 15px;display:grid;gap:14px}
+label{display:block;font-size:13px;color:var(--ink-dim);margin-bottom:5px}
+label b{color:var(--ink);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--gold)}
+select{width:100%;background:var(--turf);color:var(--ink);border:1px solid var(--line);
+  border-radius:3px;padding:9px 10px;font:inherit}
+.check{display:flex;align-items:center;gap:9px}
+.check input{accent-color:var(--gold);width:17px;height:17px}
+.check label{margin:0;color:var(--ink)}
+.dica{font-size:12px;color:var(--ink-dim);line-height:1.4}
+
+/* ---- listas ---- */
+.item{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line-2)}
+.item:last-child{border-bottom:0}
+.pos{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:13px;
+  color:var(--ink-dim);width:30px;flex:none}
+.item .corpo{flex:1;min-width:0}
+.item .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .s{font-size:12px;color:var(--ink-dim)}
+.item .n{font-family:"Barlow Condensed",sans-serif;font-weight:600;font-size:17px;
+  font-variant-numeric:tabular-nums;flex:none}
+.luxo{color:var(--gold)}
+.barra{height:3px;background:var(--line-2);border-radius:2px;overflow:hidden;margin-top:5px}
+.barra i{display:block;height:100%;background:var(--gold);opacity:.75}
+.vazio{color:var(--ink-dim);font-style:italic}
+.aviso{border:1px solid var(--alert);border-radius:3px;padding:12px 13px;margin-top:14px;font-size:14px}
+.aviso b{display:block;margin-bottom:3px}
+.sumindo{opacity:.45;transition:opacity .2s}
+footer{margin-top:30px;font-size:12px;color:var(--ink-dim);line-height:1.5}
+button.acao{width:100%;background:var(--gold);color:#13200F;border:0;border-radius:3px;
+  padding:13px;font:600 16px Barlow,sans-serif;margin-top:14px}
+button.acao:disabled{opacity:.4}
+</style>
+</head>
+<body>
+
+<div class="deadline">
+  <div class="in">
+    <span class="rodada" id="rodada">—<small id="mercado"></small></span>
+    <span id="relogio"></span>
+  </div>
+</div>
+
+<div class="wrap" id="app">
+  <div class="campo" id="campo"><p style="padding:30px 0;text-align:center;color:var(--ink-dim)">Carregando o mercado…</p></div>
+  <div class="placar" id="placar" hidden></div>
+
+  <details class="ctrl" id="ctrl" hidden>
+    <summary>Ajustar o time</summary>
+    <div class="campos">
+      <div>
+        <label for="orc">Cartoletas para os titulares <b id="orcV">100,0</b></label>
+        <input type="range" id="orc" min="40" max="300" step="0.5" value="100">
+      </div>
+      <div>
+        <label for="esq">Esquema</label>
+        <select id="esq"></select>
+      </div>
+      <div>
+        <label for="piso">Preço mínimo por titular <b id="pisoV">C$ 0,0</b></label>
+        <input type="range" id="piso" min="0" max="10" step="0.5" value="0">
+        <p class="dica">O reserva não pode custar mais que o titular mais barato da
+          posição. Subir esse mínimo tira pontos do time titular e compra um banco que funciona.</p>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="duvida">
+        <label for="duvida">Aceitar quem está como Dúvida</label>
+      </div>
+      <button class="acao" id="recarregar">Buscar dados novos</button>
+    </div>
+  </details>
+
+  <div id="corpo"></div>
+
+  <footer id="rodape"></footer>
+</div>
+
+<script>
+const API = 'https://api.cartolafc.globo.com';
+const POS = {1:'GOL',2:'LAT',3:'ZAG',4:'MEI',5:'ATA',6:'TEC'};
+const MAX_CLUBE = 5;
+const PESOS = { mandoCasa:1.10, mandoFora:0.95, posAdv:0.015, forma:0.20, shrink:3 };
+const ESQ_FALLBACK = {
+  1:{nome:'3-4-3',1:1,2:0,3:3,4:4,5:3,6:1}, 2:{nome:'3-5-2',1:1,2:0,3:3,4:5,5:2,6:1},
+  3:{nome:'4-3-3',1:1,2:2,3:2,4:3,5:3,6:1}, 4:{nome:'4-4-2',1:1,2:2,3:2,4:4,5:2,6:1},
+  5:{nome:'4-5-1',1:1,2:2,3:2,4:5,5:1,6:1}, 6:{nome:'5-3-2',1:1,2:2,3:3,4:3,5:2,6:1},
+  7:{nome:'5-4-1',1:1,2:2,3:3,4:4,5:1,6:1},
+};
+
+/* ---------- rede com cache local e proxy opcional ---------- */
+const proxy = () => localStorage.getItem('proxy') || '';
+
+async function busca(path, maxIdadeMin) {
+  const chave = 'c:' + path;
+  const salvo = JSON.parse(localStorage.getItem(chave) || 'null');
+  if (salvo && (Date.now() - salvo.t) / 60000 < maxIdadeMin) return salvo.d;
+  try {
+    const url = proxy() ? proxy() + encodeURIComponent(API + path) : API + path;
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    localStorage.setItem(chave, JSON.stringify({ t: Date.now(), d }));
+    return d;
+  } catch (e) {
+    if (salvo) { marcarOffline(salvo.t); return salvo.d; }
+    throw e;
+  }
+}
+
+/* ---------- modelo ---------- */
+const aproveita = l => !l || !l.length ? 0.5
+  : l.reduce((s,x)=> s + ({v:3,e:1,d:0}[String(x)[0].toLowerCase()] ?? 0), 0) / (3*l.length);
+
+function contexto(dados) {
+  const clubes = dados.clubes || {}, ctx = {};
+  for (const p of dados.partidas || []) {
+    if (p.valida === false) continue;
+    const nome = id => (clubes[id] || {}).abreviacao || String(id);
+    const rot = nome(p.clube_casa_id) + ' x ' + nome(p.clube_visitante_id);
+    ctx[p.clube_casa_id] = { casa:true, posAdv:p.clube_visitante_posicao||10,
+      forma:aproveita(p.aproveitamento_mandante), jogo:rot, adv:nome(p.clube_visitante_id) };
+    ctx[p.clube_visitante_id] = { casa:false, posAdv:p.clube_casa_posicao||10,
+      forma:aproveita(p.aproveitamento_visitante), jogo:rot, adv:nome(p.clube_casa_id) };
+  }
+  return { ctx, clubes };
+}
+
+const mult = c => Math.max(0.4,
+  (c.casa ? PESOS.mandoCasa : PESOS.mandoFora)
+  * (1 + (c.posAdv - 10.5) * PESOS.posAdv)
+  * (1 + (c.forma - 0.5) * PESOS.forma));
+
+function universo(mercado, ctx, { duvida, piso }) {
+  const ok = new Set(duvida ? [7,2] : [7]);
+  const soma = {}, cont = {};
+  for (const a of mercado.atletas || []) if ((a.jogos_num||0) >= 3) {
+    soma[a.posicao_id] = (soma[a.posicao_id]||0) + (a.media_num||0);
+    cont[a.posicao_id] = (cont[a.posicao_id]||0) + 1;
+  }
+  const out = [];
+  for (const a of mercado.atletas || []) {
+    if (!ok.has(a.status_id)) continue;
+    const c = ctx[a.clube_id]; if (!c) continue;
+    const preco = a.preco_num || 0; if (preco <= 0) continue;
+    if (piso > 0 && preco < piso && a.posicao_id !== 6) continue;
+    const jogos = a.jogos_num || 0, media = a.media_num || 0;
+    const prior = cont[a.posicao_id] ? soma[a.posicao_id]/cont[a.posicao_id] : 2;
+    const base = (media*jogos + prior*PESOS.shrink) / (jogos + PESOS.shrink);
+    out.push({ id:a.atleta_id, nome:a.apelido, pos:a.posicao_id, posNome:POS[a.posicao_id],
+      clubeId:a.clube_id, clube:(mercado.clubes[a.clube_id]||{}).abreviacao||'?',
+      preco, media, jogos, mult:mult(c), esperado:base*mult(c), jogo:c.jogo, casa:c.casa });
+  }
+  return out;
+}
+
+/* ---------- otimização: guloso + busca local ---------- */
+function otimiza(uni, esq, orcamento) {
+  const porPos = {};
+  for (const p of uni) (porPos[p.pos] ||= []).push(p);
+  for (const k in porPos) porPos[k].sort((a,b)=>b.esperado-a.esperado);
+  const slots = Object.keys(esq).filter(k=>!isNaN(k) && esq[k]>0).map(Number);
+
+  let melhor = null;
+  // A ultima tentativa (agr = 0) preenche com os mais baratos: garante um time
+  // valido sempre que ele existe, e a busca local depois gasta a sobra.
+  for (const agr of [1, .85, .7, .55, .45, 0]) {
+    let time = [], gasto = 0, porClube = {}, ok = true;
+    for (const pos of [...slots].sort((a,b)=>esq[b]-esq[a])) {
+      const qtd = esq[pos]; let n = 0;
+      const teto = (orcamento - gasto) * agr / Math.max(1, qtd);
+      const fila = agr ? (porPos[pos] || [])
+                       : [...(porPos[pos] || [])].sort((a,b)=>a.preco-b.preco);
+      for (const p of fila) {
+        if (n >= qtd) break;
+        if ((porClube[p.clubeId]||0) >= MAX_CLUBE) continue;
+        if (agr && p.preco > teto && n < qtd - 1) continue;
+        if (gasto + p.preco > orcamento) continue;
+        time.push(p); gasto += p.preco; porClube[p.clubeId] = (porClube[p.clubeId]||0)+1; n++;
+      }
+      if (n < qtd) { ok = false; break; }
+    }
+    if (!ok) continue;
+
+    for (let it = 0; it < 300; it++) {
+      let trocou = false;
+      const ids = new Set(time.map(p=>p.id));
+      for (let i = 0; i < time.length && !trocou; i++) {
+        const at = time[i];
+        for (const c of (porPos[at.pos]||[]).slice(0, 80)) {
+          if (ids.has(c.id) || c.esperado <= at.esperado) continue;
+          const novo = gasto - at.preco + c.preco;
+          if (novo > orcamento) continue;
+          if (c.clubeId !== at.clubeId && (porClube[c.clubeId]||0) >= MAX_CLUBE) continue;
+          porClube[at.clubeId]--; porClube[c.clubeId] = (porClube[c.clubeId]||0)+1;
+          time[i] = c; gasto = novo; trocou = true; break;
+        }
+      }
+      if (!trocou) break;
+    }
+    const semTec = time.filter(p=>p.pos!==6);
+    const total = time.reduce((s,p)=>s+p.esperado,0)
+      + Math.max(0, ...semTec.map(p=>p.esperado));
+    if (!melhor || total > melhor.total) {
+      const cap = semTec.reduce((a,b)=> a && a.esperado>=b.esperado ? a : b, null);
+      melhor = { total, time, cap, gasto };
+    }
+  }
+  return melhor;
+}
+
+/* ---------- banco: teto de preço por posição ----------
+   O reserva de luxo vale como opção, não como troca: ele entra só se pontuar
+   mais que o pior titular da posição, então o ganho é E[max(res, pior)] − E[pior],
+   que é positivo mesmo quando a média do reserva é menor. Comparar só as médias
+   daria "nenhum" sempre — o otimizador já teria escalado quem tivesse média
+   maior dentro do teto. Aproximação normal com desvios típicos por posição. */
+const SIGMA = {1:3.0, 2:3.2, 3:3.0, 4:3.6, 5:4.2};
+const Phi = x => 0.5 * (1 + Math.sign(x) * Math.sqrt(1 - Math.exp(-2*x*x/Math.PI)));
+const phi = x => Math.exp(-x*x/2) / Math.sqrt(2*Math.PI);
+
+function ganhoOpcao(muRes, muPior, pos) {
+  const s = Math.SQRT2 * (SIGMA[pos] || 3.2);
+  const t = (muRes - muPior) / s;
+  return muRes*Phi(t) + muPior*Phi(-t) + s*phi(t) - muPior;
+}
+
+function banco(uni, titulares, esq) {
+  const ids = new Set(titulares.map(t=>t.id)), porClube = {};
+  for (const t of titulares) porClube[t.clubeId] = (porClube[t.clubeId]||0)+1;
+  const out = [];
+  for (const pos of [1,2,3,4,5]) {
+    if (!esq[pos]) continue;
+    const tp = titulares.filter(t=>t.pos===pos); if (!tp.length) continue;
+    const teto = Math.min(...tp.map(t=>t.preco));
+    const pior = Math.min(...tp.map(t=>t.esperado));
+    const cand = uni.filter(p=>p.pos===pos && !ids.has(p.id) && p.preco <= teto + 1e-9
+      && (porClube[p.clubeId]||0) < MAX_CLUBE);
+    if (!cand.length) { out.push({ pos, posNome:POS[pos], teto, vazio:true }); continue; }
+    const esc = cand.reduce((a,b)=> a.esperado>=b.esperado ? a : b);
+    porClube[esc.clubeId] = (porClube[esc.clubeId]||0)+1;
+    out.push({ ...esc, teto, pior, ganho: ganhoOpcao(esc.esperado, pior, pos), vazio:false });
+  }
+  const reais = out.filter(b=>!b.vazio);
+  const luxo = reais.length ? reais.reduce((a,b)=> a.ganho>=b.ganho ? a : b) : null;
+  return { lista: out, luxo };
+}
+
+/* ---------- tela ---------- */
+const $ = s => document.querySelector(s);
+const num = (v,d=2) => v.toFixed(d).replace('.',',');
+let ESTADO = {};
+
+function pintaCampo(time, cap) {
+  const por = p => time.filter(x=>x.pos===p).sort((a,b)=>b.esperado-a.esperado);
+  const chip = p => `<div class="chip${cap && p.id===cap.id?' cap':''}">
+      <div class="nome">${p.nome}</div>
+      <div class="sub"><span class="${p.casa?'':'fora'}">${p.clube}</span>
+      <span class="pts">${num(p.esperado,1)}</span></div>
+      ${cap && p.id===cap.id ? '<i class="faixa"></i>' : ''}</div>`;
+  const linha = arr => arr.length ? `<div class="linha">${arr.map(chip).join('')}</div>` : '';
+  const defesa = [...por(2).slice(0,1), ...por(3), ...por(2).slice(1)];
+  $('#campo').innerHTML =
+    linha(por(5)) + linha(por(4)) + linha(defesa) + linha(por(1)) + linha(por(6));
+}
+
+function pintaPlacar(r, orcamento) {
+  $('#placar').hidden = false;
+  $('#placar').innerHTML = `
+    <div><b>${num(r.total,1)}</b><span>pontos esperados</span></div>
+    <div><b>${num(r.gasto)}</b><span>cartoletas usadas</span></div>
+    <div><b>${num(orcamento - r.gasto)}</b><span>sobra</span></div>`;
+}
+
+function pintaCorpo(bc, uni, ctx, clubes, mercado) {
+  const linhaBanco = b => b.vazio
+    ? `<div class="item"><span class="pos">${b.posNome}</span>
+        <div class="corpo"><div class="t vazio">Nada dentro do teto de C$ ${num(b.teto)}</div></div></div>`
+    : `<div class="item"><span class="pos">${b.posNome}</span>
+        <div class="corpo"><div class="t">${b.nome}
+          ${bc.luxo && b.id===bc.luxo.id ? '<span class="luxo"> · reserva de luxo</span>' : ''}</div>
+          <div class="s">${b.clube} · C$ ${num(b.preco)} · teto C$ ${num(b.teto)}</div></div>
+        <span class="n">${num(b.esperado,1)}</span></div>`;
+
+  const confrontos = Object.entries(ctx)
+    .map(([id,c]) => ({ abrev:(clubes[id]||{}).abreviacao||id, c, m:mult(c) }))
+    .sort((a,b)=> b.m - a.m);
+  const ms = confrontos.map(x=>x.m);
+  const maxM = Math.max(...ms), minM = Math.min(...ms);
+  const larg = m => 12 + 88 * (maxM === minM ? 1 : (m - minM) / (maxM - minM));
+  const linhaConf = x => `<div class="item">
+      <span class="pos">${x.abrev}</span>
+      <div class="corpo"><div class="t">${x.c.jogo} ${x.c.casa?'':'<span class="fora">(fora)</span>'}</div>
+        <div class="s">adversário em ${x.c.posAdv}º</div>
+        <div class="barra"><i style="width:${larg(x.m).toFixed(0)}%"></i></div></div>
+      <span class="n">${num(x.m,2)}</span></div>`;
+
+  const fora = (mercado.atletas||[])
+    .filter(a => [3,5,6].includes(a.status_id) && (a.preco_num||0) >= 10 && ctx[a.clube_id])
+    .sort((a,b)=> b.preco_num - a.preco_num).slice(0,10)
+    .map(a => `<div class="item"><span class="pos">${({3:'SUS',5:'LES',6:'NUL'})[a.status_id]}</span>
+        <div class="corpo"><div class="t">${a.apelido}</div>
+        <div class="s">${(mercado.clubes[a.clube_id]||{}).abreviacao} · C$ ${num(a.preco_num)}</div></div></div>`);
+
+  $('#corpo').innerHTML = `
+    <h2>Banco</h2>
+    <p class="dica">Não gasta cartoleta. Entra só se o titular não pisar em campo — o
+      reserva de luxo entra pela pontuação, contra o pior titular da mesma posição.</p>
+    ${bc.lista.map(linhaBanco).join('') || '<p class="vazio">Nenhum reserva cabe no teto.</p>'}
+    ${bc.luxo ? `<p class="dica" style="margin-top:10px">O luxo foi para ${bc.luxo.posNome}:
+      vale +${num(bc.luxo.ganho,1)} ${bc.luxo.ganho>=1.95?'pontos':'ponto'} por poder substituir o pior titular da posição,
+      que esperamos em ${num(bc.luxo.pior,1)}.</p>` : ''}
+    <h2>Confrontos</h2>
+    <p class="dica">Mando de campo, posição do adversário na tabela e os últimos cinco jogos,
+      combinados num multiplicador. Acima de 1,00 pesa a favor.</p>
+    ${confrontos.map(linhaConf).join('')}
+    ${fora.length ? `<h2>Caros fora de combate</h2>${fora.join('')}` : ''}`;
+}
+
+function relogio(ts) {
+  const el = $('#relogio');
+  if (!ts) { el.textContent = ''; return; }
+  const tick = () => {
+    let s = ts * 1000 - Date.now();
+    if (s <= 0) { el.textContent = 'mercado fechado'; el.className = 'fechado'; return; }
+    const d = Math.floor(s/864e5), h = Math.floor(s/36e5)%24, m = Math.floor(s/6e4)%60;
+    el.textContent = d ? `${d}d ${h}h` : (h ? `${h}h ${m}min` : `${m}min`);
+    el.className = (s < 36e5) ? 'fechado' : '';
+  };
+  tick(); clearInterval(window._t); window._t = setInterval(tick, 30000);
+}
+
+function marcarOffline(t) {
+  ESTADO.offline = new Date(t).toLocaleString('pt-BR',
+    { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+
+function recalcula() {
+  const orcamento = +$('#orc').value;
+  const opts = { duvida: $('#duvida').checked, piso: +$('#piso').value };
+  $('#orcV').textContent = num(orcamento,1);
+  $('#pisoV').textContent = 'C$ ' + num(+$('#piso').value, 1);
+
+  const uni = universo(ESTADO.mercado, ESTADO.ctx, opts);
+  if (!uni.length) { $('#campo').innerHTML = '<p class="vazio" style="padding:24px;text-align:center">Nenhum jogador passa nesses filtros.</p>'; return; }
+
+  const alvos = $('#esq').value === '0' ? Object.keys(ESTADO.esquemas) : [$('#esq').value];
+  let melhor = null, esqEscolhido = null;
+  for (const eid of alvos) {
+    const esq = ESTADO.esquemas[eid]; if (!esq) continue;
+    const r = otimiza(uni, esq, orcamento);
+    if (r && (!melhor || r.total > melhor.total)) { melhor = r; esqEscolhido = esq; }
+  }
+  if (!melhor) {
+    $('#campo').innerHTML = '<p class="vazio" style="padding:24px;text-align:center">Não cabe time nesse orçamento. Aumente as cartoletas ou baixe o preço mínimo.</p>';
+    $('#placar').hidden = true; $('#corpo').innerHTML = ''; return;
+  }
+  pintaCampo(melhor.time, melhor.cap);
+  pintaPlacar(melhor, orcamento);
+  pintaCorpo(banco(uni, melhor.time, esqEscolhido), uni, ESTADO.ctx, ESTADO.clubes, ESTADO.mercado);
+  $('#ctrl').querySelector('summary').textContent =
+    `Ajustar o time · ${esqEscolhido.nome} · C$ ${num(orcamento,1)}`;
+  $('#rodape').innerHTML = ESTADO.offline
+    ? `Sem conexão com a API. Mostrando os dados salvos em ${ESTADO.offline}.`
+    : 'Pontuação esperada é estimativa do modelo, não promessa. Confira a escalação no app oficial antes do fechamento.';
+}
+
+async function carrega(forcar) {
+  const idade = forcar ? 0 : 10;
+  const status = await busca('/mercado/status', forcar ? 0 : 5);
+  const rodada = status.rodada_atual;
+  $('#rodada').innerHTML = `Rodada ${rodada}<small>${status.status_mercado_txt||''}</small>`;
+  relogio(status.fechamento_ts);
+
+  const [part, mercado, esqApi] = await Promise.all([
+    busca('/partidas/' + rodada, idade),
+    busca('/atletas/mercado', idade),
+    busca('/esquemas', 10080).catch(()=>null),
+  ]);
+
+  const { ctx, clubes } = contexto(part);
+  if (!Object.keys(ctx).length) throw new Error('A API não devolveu partidas para esta rodada.');
+
+  let esquemas = ESQ_FALLBACK;
+  if (Array.isArray(esqApi) && esqApi.length) {
+    esquemas = {};
+    for (const e of esqApi) {
+      const d = { nome: e.nome };
+      for (const k in (e.posicoes||{})) d[+k] = e.posicoes[k];
+      esquemas[e.esquema_id] = d;
+    }
+  }
+  const sel = $('#esq');
+  sel.innerHTML = '<option value="0">Melhor de todos</option>' +
+    Object.keys(esquemas).sort().map(k=>`<option value="${k}">${esquemas[k].nome}</option>`).join('');
+
+  ESTADO = { ctx, clubes, mercado, esquemas, offline: ESTADO.offline };
+  $('#ctrl').hidden = false;
+  recalcula();
+}
+
+/* ---------- eventos ---------- */
+for (const id of ['orc','piso']) $('#'+id).addEventListener('input', recalcula);
+for (const id of ['esq','duvida']) $('#'+id).addEventListener('change', recalcula);
+$('#recarregar').addEventListener('click', async e => {
+  e.target.disabled = true; e.target.textContent = 'Buscando…';
+  try { ESTADO.offline = null; await carrega(true); }
+  catch (err) { alert('Não consegui atualizar: ' + err.message); }
+  e.target.disabled = false; e.target.textContent = 'Buscar dados novos';
+});
+
+const salvo = JSON.parse(localStorage.getItem('prefs') || '{}');
+if (salvo.orc) $('#orc').value = salvo.orc;
+if (salvo.piso) $('#piso').value = salvo.piso;
+addEventListener('change', () => localStorage.setItem('prefs',
+  JSON.stringify({ orc: $('#orc').value, piso: $('#piso').value })));
+
+carrega(false).catch(err => {
+  $('#campo').innerHTML = `<div class="aviso"><b>Não consegui falar com a API do Cartola</b>
+    ${err.message}. Se o erro for de CORS, o navegador está bloqueando a chamada direta.
+    O LEIA-ME mostra como subir um proxy grátis em dois minutos; com o endereço em mãos,
+    é só colar aqui.<button class="acao" id="setProxy">Informar o proxy</button></div>`;
+  $('#setProxy').addEventListener('click', () => {
+    const p = prompt('Endereço do proxy (termina em ?url= ):', proxy());
+    if (p === null) return;
+    p.trim() ? localStorage.setItem('proxy', p.trim()) : localStorage.removeItem('proxy');
+    location.reload();
+  });
+});
+
+if ('serviceWorker' in navigator)
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script>
+</body>
+</html>
